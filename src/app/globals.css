@@ -1,26 +1,87 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --void: oklch(15.5% 0.008 78);
+  --panel: oklch(19.5% 0.01 78);
+  --panel-raised: oklch(23% 0.012 78);
+  --line: oklch(29% 0.014 78);
+  --ink: oklch(93% 0.008 78);
+  --ink-dim: oklch(66% 0.014 78);
+  --ink-faint: oklch(46% 0.014 78);
+  --accent: oklch(78% 0.16 82);
+  --accent-dim: oklch(78% 0.16 82 / 0.14);
+  --loss: oklch(66% 0.1 25);
+  --loss-dim: oklch(66% 0.1 25 / 0.14);
+
+  /* Restrained state-feedback motion only — no decorative/choreographed
+     motion (see PRODUCT.md/DESIGN.md). Exponential ease-out curves, never
+     bounce/elastic. */
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-void: var(--void);
+  --color-panel: var(--panel);
+  --color-panel-raised: var(--panel-raised);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-ink-dim: var(--ink-dim);
+  --color-ink-faint: var(--ink-faint);
+  --color-accent: var(--accent);
+  --color-accent-dim: var(--accent-dim);
+  --color-loss: var(--loss);
+  --color-loss-dim: var(--loss-dim);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  /* Every transition-* utility (hover/color/opacity states) picks this up
+     automatically, so it shares one easing curve with the keyframe
+     animations below instead of falling back to Tailwind's stock ease. */
+  --default-transition-timing-function: var(--ease-out-quart);
+
+  --animate-fade-in: fade-in 400ms var(--ease-out-quart) both;
+  --animate-reveal: reveal 450ms var(--ease-out-quart) both;
+  /* For tiny indicator elements (e.g. the sidebar's active-tab marker) — at
+     the general 400ms duration, a small high-contrast shape stays visibly
+     "resolving" long enough to look like the wrong size mid-transition. */
+  --animate-fade-in-fast: fade-in 150ms var(--ease-out-quart) both;
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes reveal {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--void);
+  color: var(--ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

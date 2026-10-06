@@ -2,11 +2,51 @@
 
 import { useEffect, useState } from "react";
 import type { StockResult } from "@/lib/types";
+import type { RawStockMetrics } from "@/lib/scoring";
+import { SCREENING_UNIVERSE } from "@/lib/universe";
 import { formatDateTime } from "@/lib/format";
 import { StockPanel } from "./stock-panel";
 import { ResultsSkeleton } from "./results-skeleton";
 
 type Status = "initializing" | "idle" | "loading" | "error" | "done";
+
+// Cloudflare Workers (Free plan) caps outbound fetches at 50 per request —
+// well under what a single-shot full-universe screen needs (~100+ Yahoo
+// Finance calls). Splitting into batches means each one is its own request/
+// invocation with its own fresh subrequest budget. 30 leaves comfortable
+// headroom (30 bars fetches + 1 chunked quotes fetch = 31, vs. the 50 cap).
+const BATCH_SIZE = 30;
+
+function batchSymbols(): string[][] {
+  const symbols = SCREENING_UNIVERSE.map((c) => c.symbol);
+  const batches: string[][] = [];
+  for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
+    batches.push(symbols.slice(i, i + BATCH_SIZE));
+  }
+  return batches;
+}
+
+/** ~30 concurrent outbound fetches per batch occasionally trips a transient failure (observed directly in testing, not hypothetical) — one retry covers it without masking a real, persistent error. */
+async function fetchBarsBatch(symbols: string[]): Promise<RawStockMetrics[]> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch("/api/screen/bars", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbols }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error ?? "Failed to fetch a batch of market data.");
+      }
+      const data = await res.json();
+      return data.metrics as RawStockMetrics[];
+    } catch (err) {
+      if (attempt === 1) throw err;
+    }
+  }
+  throw new Error("unreachable");
+}
 
 export function Screener() {
   const [status, setStatus] = useState<Status>("initializing");
@@ -50,7 +90,23 @@ export function Screener() {
     setError(null);
 
     try {
-      const res = await fetch("/api/screen", { method: "POST" });
+      // Sequential, not Promise.all: running all batches concurrently means
+      // up to ~24 simultaneous outbound Yahoo Finance fetches at once (6
+      // per batch's internal concurrency × 4 batches), which was observed
+      // directly to occasionally slow individual fetches enough to trip
+      // Cloudflare's "Worker hung" watchdog and kill the whole batch. One
+      // batch at a time is slower end-to-end but keeps each batch's actual
+      // load (and reliability) the same as testing it in isolation.
+      const batchResults: RawStockMetrics[][] = [];
+      for (const symbols of batchSymbols()) {
+        batchResults.push(await fetchBarsBatch(symbols));
+      }
+
+      const res = await fetch("/api/screen/finalize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ metrics: batchResults.flat() }),
+      });
 
       if (!res.ok) {
         const body = await res.json().catch(() => null);

@@ -33,7 +33,7 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
-# local sqlite data
+# local sqlite data (pre-Cloudflare-migration; unused now, kept ignored in case it still exists on disk)
 /data
 
 # vercel
@@ -42,3 +42,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# cloudflare / opennext
+/.open-next/
+/.wrangler/
+.dev.vars

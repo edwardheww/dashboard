@@ -72,6 +72,18 @@ export function NewsSentimentPanel() {
   const [status, setStatus] = useState<Status>("initializing");
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<NewsSentiment | null>(null);
+  const [history, setHistory] = useState<NewsSentiment[] | null>(null);
+
+  async function loadHistory() {
+    try {
+      const res = await fetch("/api/news-sentiment-history");
+      if (!res.ok) return;
+      const json = await res.json();
+      setHistory(json.history);
+    } catch {
+      // History is a supplementary view, not the point of the panel — fail silently.
+    }
+  }
 
   // Load whatever the last generate produced, so a refresh doesn't lose it —
   // this is a free DB read, not a Groq call, so it's fine to run on mount.
@@ -93,6 +105,7 @@ export function NewsSentimentPanel() {
       } catch {
         if (!cancelled) setStatus("idle");
       }
+      loadHistory();
     })();
 
     return () => {
@@ -112,6 +125,7 @@ export function NewsSentimentPanel() {
       const json = await res.json();
       setData(json);
       setStatus("done");
+      loadHistory();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load news sentiment.");
       setStatus("error");
@@ -179,11 +193,27 @@ export function NewsSentimentPanel() {
             <p className="text-[11px] uppercase tracking-wider text-ink-faint">Headlines</p>
             <div className="mt-2 flex flex-col gap-2">
               {data.headlines.map((h, i) => (
-                <p key={i} className="text-sm text-ink-dim">
-                  {h.title}
-                </p>
+                <div key={i}>
+                  <p className="text-sm text-ink-dim">{h.title}</p>
+                  {h.description && <p className="mt-0.5 text-xs text-ink-faint">{h.description}</p>}
+                </div>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {history && history.length > 1 && (
+        <div className="animate-fade-in border border-line p-5">
+          <p className="text-[11px] uppercase tracking-wider text-ink-faint">History (most recent first)</p>
+          <div className="mt-3 flex flex-col gap-1.5">
+            {history.map((h, i) => (
+              <div key={i} className="flex items-baseline gap-3">
+                <span className="w-32 shrink-0 font-mono text-xs text-ink-faint tabular-nums">{formatDateTime(h.generatedAt)}</span>
+                <span className={`font-mono text-sm tabular-nums ${scoreTone(h.score)}`}>{Math.round(h.score)}</span>
+                <span className="truncate text-xs text-ink-faint">{h.summary}</span>
+              </div>
+            ))}
           </div>
         </div>
       )}

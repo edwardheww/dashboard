@@ -31,10 +31,33 @@ function TradeLogStats({ entries }: { entries: TradeLogEntry[] }) {
   );
 }
 
+/** data: URLs -> Blob, so the full-size view opens via a blob: URL instead. */
+function dataUrlToBlob(dataUrl: string): Blob {
+  const [header, base64] = dataUrl.split(",");
+  const mime = /data:(.*?);base64/.exec(header)?.[1] ?? "image/jpeg";
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
 function ChartThumbnail({ src, label }: { src: string | null; label: string }) {
   if (!src) return <span className="text-xs text-ink-faint">—</span>;
+
+  // Chrome (and other Chromium browsers) block top-frame navigation to
+  // data: URLs — clicking a plain `<a href="data:...">` silently opens
+  // about:blank in the new tab instead of the image. Converting to a
+  // blob: URL first sidesteps that; blob: URLs aren't subject to the same
+  // restriction. The inline <img> below is unaffected either way (loading
+  // a data: URL as a subresource was never blocked, only navigating to one).
+  function openFullSize(e: React.MouseEvent) {
+    e.preventDefault();
+    const objectUrl = URL.createObjectURL(dataUrlToBlob(src!));
+    window.open(objectUrl, "_blank", "noopener,noreferrer");
+  }
+
   return (
-    <a href={src} target="_blank" rel="noopener noreferrer" title={`Open ${label} full-size`}>
+    <a href={src} onClick={openFullSize} title={`Open ${label} full-size`}>
       {/* eslint-disable-next-line @next/next/no-img-element -- dynamic base64 data URLs, not a static asset next/image can optimize */}
       <img src={src} alt={label} className="h-12 w-20 border border-line object-cover transition-opacity duration-300 hover:opacity-80" />
     </a>
@@ -60,15 +83,13 @@ export function TradeLogTable({
     <div className="flex flex-col gap-4">
       <TradeLogStats entries={entries} />
       <div className="overflow-x-auto border border-line">
-        <table className="w-full min-w-[760px] border-collapse text-sm">
+        <table className="w-full min-w-[500px] border-collapse text-sm">
           <thead>
             <tr className="border-b border-line text-left">
               <th className={th}>Date</th>
               <th className={th}>AI Analysis</th>
-              <th className={th}>CVD</th>
               <th className={th}>RR</th>
-              <th className={th}>5m/15m Chart</th>
-              <th className={th}>1m Chart</th>
+              <th className={th}>Chart</th>
               <th className={th}></th>
             </tr>
           </thead>
@@ -77,7 +98,6 @@ export function TradeLogTable({
               <tr key={entry.id} className="border-b border-line">
                 <td className={`${td} font-mono tabular-nums text-ink-dim`}>{entry.entryDate}</td>
                 <td className={`${td} font-mono tabular-nums text-ink`}>{entry.aiAnalysis ?? "—"}</td>
-                <td className={`${td} font-mono tabular-nums text-ink-dim`}>{entry.cvd ?? "—"}</td>
                 <td
                   className={`${td} font-mono tabular-nums ${
                     entry.rr === null ? "text-ink-faint" : entry.rr >= 0 ? "text-accent" : "text-loss"
@@ -86,10 +106,7 @@ export function TradeLogTable({
                   {entry.rr !== null ? `${formatSignedNumber(entry.rr)}R` : "—"}
                 </td>
                 <td className={td}>
-                  <ChartThumbnail src={entry.chart5m15m} label="5m/15m chart" />
-                </td>
-                <td className={td}>
-                  <ChartThumbnail src={entry.chart1m} label="1m chart" />
+                  <ChartThumbnail src={entry.chart} label="chart" />
                 </td>
                 <td className={`${td} text-right`}>
                   <button

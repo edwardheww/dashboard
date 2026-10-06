@@ -15,7 +15,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
   if (!Number.isInteger(positionId)) {
     return NextResponse.json({ error: "Invalid position id." }, { status: 400 });
   }
-  if (!getPosition(positionId)) {
+  if (!(await getPosition(positionId))) {
     return NextResponse.json({ error: "Position not found." }, { status: 404 });
   }
 
@@ -45,7 +45,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     update.notes = body.notes;
   }
 
-  const position = updatePosition(positionId, update);
+  const position = await updatePosition(positionId, update);
   return NextResponse.json({ position });
 }
 
@@ -56,6 +56,6 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
     return NextResponse.json({ error: "Invalid position id." }, { status: 400 });
   }
 
-  deletePosition(positionId);
+  await deletePosition(positionId);
   return NextResponse.json({ ok: true });
 }

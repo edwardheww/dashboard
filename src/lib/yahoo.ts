@@ -52,8 +52,9 @@ export async function getQuotes(symbols: string[]): Promise<Map<string, Quote>> 
             });
           }
         }
-      } catch {
+      } catch (err) {
         // this chunk's symbols just won't be in the map; callers treat missing quotes as "can't screen it"
+        console.error("Yahoo quote() failed:", err instanceof Error ? err.message : err);
       }
     })
   );
@@ -92,7 +93,8 @@ export async function getHistoricalBars(symbols: string[], tradingDays = 260): P
         })
         .sort((a, b) => a.date.localeCompare(b.date)); // API order isn't guaranteed; sort oldest-first ourselves
       map.set(symbol, bars);
-    } catch {
+    } catch (err) {
+      console.error(`Yahoo chart() failed for ${symbol}:`, err instanceof Error ? err.message : err);
       map.set(symbol, []);
     }
   });

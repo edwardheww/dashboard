@@ -4,7 +4,7 @@ import type { NewTradeLogEntryInput } from "@/lib/trade-log";
 
 export async function GET() {
   try {
-    const entries = listTradeLogEntries();
+    const entries = await listTradeLogEntries();
     return NextResponse.json({ entries });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to load trade log.";
@@ -29,23 +29,18 @@ export async function POST(request: Request) {
   if (!isNumberOrNull(body.aiAnalysis) || (body.aiAnalysis != null && (body.aiAnalysis < 0 || body.aiAnalysis > 100))) {
     return NextResponse.json({ error: "aiAnalysis must be a number 0-100." }, { status: 400 });
   }
-  if (!isNumberOrNull(body.cvd)) {
-    return NextResponse.json({ error: "cvd must be a number." }, { status: 400 });
-  }
   if (!isNumberOrNull(body.rr)) {
     return NextResponse.json({ error: "rr must be a number." }, { status: 400 });
   }
-  if (!isStringOrNull(body.chart5m15m) || !isStringOrNull(body.chart1m)) {
-    return NextResponse.json({ error: "chart5m15m/chart1m must be strings (data URLs)." }, { status: 400 });
+  if (!isStringOrNull(body.chart)) {
+    return NextResponse.json({ error: "chart must be a string (data URL)." }, { status: 400 });
   }
 
-  const entry = createTradeLogEntry({
+  const entry = await createTradeLogEntry({
     entryDate: body.entryDate,
     aiAnalysis: body.aiAnalysis ?? null,
-    cvd: body.cvd ?? null,
     rr: body.rr ?? null,
-    chart5m15m: body.chart5m15m ?? null,
-    chart1m: body.chart1m ?? null,
+    chart: body.chart ?? null,
   });
 
   return NextResponse.json({ entry }, { status: 201 });

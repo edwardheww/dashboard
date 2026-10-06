@@ -192,6 +192,51 @@ New tab, `src/app/futures/calendar/page.tsx` — a plain lookup (no LLM
 call, no scoring), so unlike news-sentiment it just fetches live on page
 load rather than being button-triggered or persisted.
 
+## Intraday NQ direction — five ideas tested, all rejected (2026-08-11/12)
+
+Prompted by a comparison to a different (non-backtested) chat session that
+"felt" good at calling intraday direction — flagged directly as an
+unverified impression, same illusion-of-skill trap the rule-based
+macro-bias score fell into before it was actually checked against data.
+Five literature-adjacent or user-proposed, data-feasible ideas were
+backtested against real NQ=F history with the same methodology as
+everything else in this file (chronological 50/50 train/test split,
+Spearman correlation + median-based bucket stats, outlier trim).
+`scripts/backtest-intraday.ts` (`npm run backtest:intraday`).
+
+**Data constraints that shaped what could even be tested**: Yahoo's free
+API caps 5-minute intraday bars at 60 calendar days of history (verified
+live — a platform limit, not a setting) — that's ~39 usable RTH sessions
+after filtering for adequate bar coverage, split ~20/19 train/test. True
+CVD (bid/ask-classified order flow) isn't available from this source at
+all — only bar-level aggregate volume — so "order flow" here is
+necessarily an up/down-bar volume proxy, not the real thing.
+
+| Idea | Method | Result |
+|---|---|---|
+| Gap-and-gap-fill | Spearman(gap %, same-day open-to-close return %) + bucketed by gap direction/size. Daily bars, deep history: 628 observations, 314/314 split — by far the most statistically meaningful of the four. | Correlation sign-flips: train +0.090, test -0.132. Large-gap-down bucket flips hardest — train continuation +0.173% (53% win), test **reverses to -0.702%** (29% win: large gap-downs in the test period mostly bounced, not continued). No stable relationship despite the largest sample size of any test in this file. |
+| VWAP-relative positioning | Spearman(distance from session VWAP at 10:30 ET, return from 10:30 to close). 39 sessions, 20/19 split. | Correlation sign-flips: train -0.113, test +0.121, both weak. Bucket win-rates near 40-56% (coin-flip range) with n as low as 7-13 per bucket — too thin to trust even before the sign-flip. |
+| Opening-range breakout | First 30min (9:30-10:00 ET) high/low; first breakout after that predicts continuation (+) or reversal (-) into the close. 38 breakout sessions, 19/19 split. | Sign-flips: train median -0.179% (47% win — breakouts *failed* more than they held, in-sample), test +0.091% (58% win). Direction-split buckets (n=7-12) show the same instability. |
+| Up/down-volume proxy for order flow | Cumulative (+volume on up-bars, -volume on down-bars) through 11:30 ET vs. rest-of-session return. 39 sessions, 20/19 split. | Near-zero, unstable correlation: train -0.024, test +0.149. Bucket effect size collapses train-to-test (e.g. one bucket: +0.730% train -> +0.018% test). No usable signal, and this is the *weaker* proxy version of CVD to begin with. |
+| 20EMA regime + prior-day range follow-through (user-proposed, 2026-08-12) | BULLISH signal if yesterday's close > yesterday's 20EMA AND yesterday's close > the high two days ago (strong follow-through); BEARISH the mirror image (< 20EMA, < low two days ago); else indeterminate. Tests both today's open-to-close and close-to-close return. Daily bars, deep history: 609 observations, 305/304 split. | **Rejected for a subtler reason than the other four**: the signal fires often (bullish 26-31%, bearish 13-15% of days) and superficially "wins" — bullish hit-rate 57% both train and test — but NQ's *unconditional* up-day rate was 55-57% in both periods too (it's just been trending up). The bullish signal's hit rate is statistically indistinguishable from that baseline, not better than it. The bearish signal is the tell: 45% (train) / 44% (test) hit-rate, almost exactly what betting against a 55-57%-up-day instrument gets you by chance — the EMA+follow-through logic adds no information beyond the instrument's baseline drift. Magnitude was also unstable (bullish open-to-close median +0.055% train vs +0.172% test) and bullish close-to-close underperformed its own baseline in test (56% vs 57%). |
+
+**Verdict: all five rejected** — same bar as everything else in this file
+(positive AND stable on held-out test, not just train, *and* better than
+the relevant baseline — the 20EMA test is the reminder that a raw hit-rate
+alone can be misleading on a trending instrument). The gap-fill rejection
+is the most trustworthy of the five given its much larger sample; the
+three RTH-session tests (VWAP, ORB, volume-proxy) had genuinely thin
+samples (single-digit n in some buckets) on top of failing to show a
+stable pattern, so those three specifically could be revisited with a
+larger sample once more days of 5-minute history accumulate (this data
+source only allows a 60-day trailing window at any given time — there's
+no way to backfill deeper, only wait and re-run later) — though the two
+fully-powered daily-bar tests (gap-fill, 20EMA) already point the same
+direction: public/derivable price-action information doesn't have obvious
+continuation, reversion, or trend-following edge on this instrument once
+checked against its own baseline drift, matching the efficient-market
+prior and the earlier macro-bias rejection.
+
 ## Dead ends (verified before building, never backtested)
 
 These were ruled out by direct verification of data availability or by a

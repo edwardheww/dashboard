@@ -7,7 +7,7 @@ export async function POST() {
     const data = await fetchNewsSentiment();
 
     try {
-      saveLastNewsSentiment(data);
+      await saveLastNewsSentiment(data);
     } catch {
       // Persistence is a convenience, not the point of the request — a save
       // failure shouldn't turn a successful generate into a failed response.

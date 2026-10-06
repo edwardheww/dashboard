@@ -16,6 +16,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Event name is required." }, { status: 400 });
   }
 
-  const event = createManualCalendarEvent({ date, time: time || "—", name });
+  const event = await createManualCalendarEvent({ date, time: time || "—", name });
   return NextResponse.json(event, { status: 201 });
 }

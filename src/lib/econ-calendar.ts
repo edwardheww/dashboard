@@ -54,7 +54,7 @@ export async function fetchEventsInRange(from: string, to: string): Promise<Cale
     source: "fed",
   }));
 
-  const manualEvents: CalendarEvent[] = listManualCalendarEventsInRange(from, to).map((e) => ({
+  const manualEvents: CalendarEvent[] = (await listManualCalendarEventsInRange(from, to)).map((e) => ({
     id: e.id,
     name: e.name,
     date: e.date,

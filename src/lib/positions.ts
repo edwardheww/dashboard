@@ -31,39 +31,41 @@ function mapRow(row: PositionRow): Position {
   };
 }
 
-export function createPosition(input: NewPositionInput): Position {
+export async function createPosition(input: NewPositionInput): Promise<Position> {
   const db = getDb();
-  const stmt = db.prepare(`
-    INSERT INTO positions (ticker, shares, entry_price, entry_date, ai_target, thesis, notes, created_at)
-    VALUES (@ticker, @shares, @entryPrice, @entryDate, @aiTarget, @thesis, @notes, @createdAt)
-  `);
-  const result = stmt.run({
-    ticker: input.ticker.toUpperCase(),
-    shares: input.shares,
-    entryPrice: input.entryPrice,
-    entryDate: input.entryDate,
-    aiTarget: input.aiTarget ?? null,
-    thesis: input.thesis ?? null,
-    notes: input.notes ?? null,
-    createdAt: new Date().toISOString(),
-  });
-  return getPosition(Number(result.lastInsertRowid))!;
+  const result = await db
+    .prepare(
+      `INSERT INTO positions (ticker, shares, entry_price, entry_date, ai_target, thesis, notes, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(
+      input.ticker.toUpperCase(),
+      input.shares,
+      input.entryPrice,
+      input.entryDate,
+      input.aiTarget ?? null,
+      input.thesis ?? null,
+      input.notes ?? null,
+      new Date().toISOString()
+    )
+    .run();
+  return (await getPosition(Number(result.meta.last_row_id)))!;
 }
 
-export function listPositions(): Position[] {
+export async function listPositions(): Promise<Position[]> {
   const db = getDb();
-  const rows = db.prepare("SELECT * FROM positions ORDER BY entry_date DESC, id DESC").all() as PositionRow[];
-  return rows.map(mapRow);
+  const { results } = await db.prepare("SELECT * FROM positions ORDER BY entry_date DESC, id DESC").all<PositionRow>();
+  return results.map(mapRow);
 }
 
-export function getPosition(id: number): Position | null {
+export async function getPosition(id: number): Promise<Position | null> {
   const db = getDb();
-  const row = db.prepare("SELECT * FROM positions WHERE id = ?").get(id) as PositionRow | undefined;
+  const row = await db.prepare("SELECT * FROM positions WHERE id = ?").bind(id).first<PositionRow>();
   return row ? mapRow(row) : null;
 }
 
 /** Partial update — closing a position, correcting an exit already set, or editing notes are all just "whichever fields are present." */
-export function updatePosition(id: number, input: PositionUpdateInput): Position | null {
+export async function updatePosition(id: number, input: PositionUpdateInput): Promise<Position | null> {
   const db = getDb();
   const sets: string[] = [];
   const values: Array<string | number | null> = [];
@@ -82,14 +84,17 @@ export function updatePosition(id: number, input: PositionUpdateInput): Position
   }
 
   if (sets.length > 0) {
-    db.prepare(`UPDATE positions SET ${sets.join(", ")} WHERE id = ?`).run(...values, id);
+    await db
+      .prepare(`UPDATE positions SET ${sets.join(", ")} WHERE id = ?`)
+      .bind(...values, id)
+      .run();
   }
   return getPosition(id);
 }
 
-export function deletePosition(id: number): void {
+export async function deletePosition(id: number): Promise<void> {
   const db = getDb();
-  db.prepare("DELETE FROM positions WHERE id = ?").run(id);
+  await db.prepare("DELETE FROM positions WHERE id = ?").bind(id).run();
 }
 
 export function withPnl(position: Position, currentPrice: number | null): PositionWithPnl {

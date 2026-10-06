@@ -5,7 +5,7 @@ import type { NewPositionInput } from "@/lib/types";
 
 export async function GET() {
   try {
-    const positions = listPositions();
+    const positions = await listPositions();
     const openTickers = [...new Set(positions.filter((p) => p.exitPrice === null).map((p) => p.ticker))];
 
     const quotes = openTickers.length > 0 ? await getQuotes(openTickers) : new Map();
@@ -35,7 +35,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "entryDate is required." }, { status: 400 });
   }
 
-  const position = createPosition({
+  const position = await createPosition({
     ticker: body.ticker,
     shares: body.shares,
     entryPrice: body.entryPrice,

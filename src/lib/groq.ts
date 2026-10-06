@@ -1,7 +1,13 @@
 import Groq from "groq-sdk";
 import type { ScoredStock } from "./scoring";
 
-const MODEL = "llama-3.3-70b-versatile";
+// llama-3.3-70b-versatile was removed from Groq's lineup (2026-08-12,
+// confirmed via /v1/models — it's not deprecated-with-notice, just gone).
+// openai/gpt-oss-120b is the closest capability tier still available on
+// this account, verified directly against our exact json_object usage
+// before switching. If this breaks again, check `curl .../v1/models`
+// first — Groq has been rotating this lineup fast.
+const MODEL = "openai/gpt-oss-120b";
 
 export type AiPick = {
   symbol: string;
@@ -109,6 +115,15 @@ export async function synthesizeTopPicks(shortlist: ScoredStock[]): Promise<AiPi
   const completion = await client.chat.completions.create({
     model: MODEL,
     temperature: 0.3,
+    // gpt-oss-120b is a reasoning model — its default reasoning_effort
+    // ("medium") burns tokens on internal reasoning before writing the
+    // answer, and with no explicit cap that occasionally ate the whole
+    // budget before any JSON came out (hit this live: "max completion
+    // tokens reached before generating a valid document"). "low" cut
+    // reasoning tokens from 69 to 9 in testing; max_completion_tokens is
+    // a belt-and-suspenders ceiling on top of that.
+    reasoning_effort: "low",
+    max_completion_tokens: 2000,
     response_format: { type: "json_object" },
     messages: [
       {

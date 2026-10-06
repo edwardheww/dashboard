@@ -1,31 +1,32 @@
 import { NextResponse } from "next/server";
-import { getHistoricalBars, getQuotes } from "@/lib/yahoo";
 import { synthesizeTopPicks } from "@/lib/groq";
-import { SCREENING_UNIVERSE } from "@/lib/universe";
-import { buildMetrics, scoreStocks, type ScoredStock } from "@/lib/scoring";
+import { finalizeScoring, type RawStockMetrics, type ScoredStock } from "@/lib/scoring";
 import { saveLastScan } from "@/lib/last-scan";
 import type { ScreenResponse, StockResult } from "@/lib/types";
 
 const SHORTLIST_SIZE = 15;
 
-export async function POST() {
+function isRawStockMetrics(v: unknown): v is RawStockMetrics {
+  return typeof v === "object" && v !== null && typeof (v as { symbol?: unknown }).symbol === "string";
+}
+
+/** Takes the combined per-symbol metrics from all /api/screen/bars batches, does the cross-sectional scoring + Groq synthesis + persistence — the part of the old single-shot /api/screen that only ever makes one outbound call (Groq), so it never risked the subrequest cap on its own. */
+export async function POST(request: Request) {
+  const body = await request.json().catch(() => null);
+  const metrics = Array.isArray(body?.metrics) ? body.metrics.filter(isRawStockMetrics) : null;
+
+  if (!metrics) {
+    return NextResponse.json({ error: "metrics (array) is required." }, { status: 400 });
+  }
+  if (metrics.length < SHORTLIST_SIZE) {
+    return NextResponse.json(
+      { error: `Only ${metrics.length} stocks returned usable data (need at least ${SHORTLIST_SIZE}) — try again later.` },
+      { status: 502 }
+    );
+  }
+
   try {
-    const symbols = SCREENING_UNIVERSE.map((c) => c.symbol);
-
-    const [quotes, bars] = await Promise.all([
-      getQuotes(symbols),
-      getHistoricalBars(symbols),
-    ]);
-
-    const metrics = buildMetrics(SCREENING_UNIVERSE, quotes, bars);
-    if (metrics.length < SHORTLIST_SIZE) {
-      throw new Error(
-        `Only ${metrics.length}/${SCREENING_UNIVERSE.length} stocks in the universe returned usable data ` +
-          `(need at least ${SHORTLIST_SIZE} for a meaningful shortlist) — try again later.`
-      );
-    }
-
-    const scored = scoreStocks(metrics).sort((a, b) => b.composite - a.composite);
+    const scored = finalizeScoring(metrics).sort((a, b) => b.composite - a.composite);
     const shortlist: ScoredStock[] = scored.slice(0, SHORTLIST_SIZE);
 
     const picks = await synthesizeTopPicks(shortlist);
@@ -59,7 +60,7 @@ export async function POST() {
     };
 
     try {
-      saveLastScan(response.generatedAt, results);
+      await saveLastScan(response.generatedAt, results);
     } catch {
       // Persistence is a convenience, not the point of the request — a save
       // failure shouldn't turn a successful scan into a failed response.

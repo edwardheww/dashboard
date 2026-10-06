@@ -57,10 +57,8 @@ export function TradeLogForm({
 }) {
   const [entryDate, setEntryDate] = useState(todayIso());
   const [aiAnalysis, setAiAnalysis] = useState("");
-  const [cvd, setCvd] = useState("");
   const [rr, setRr] = useState("");
-  const [chart5m15mFile, setChart5m15mFile] = useState<File | null>(null);
-  const [chart1mFile, setChart1mFile] = useState<File | null>(null);
+  const [chartFile, setChartFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -72,34 +70,25 @@ export function TradeLogForm({
     if (aiAnalysisNum !== null && (!Number.isFinite(aiAnalysisNum) || aiAnalysisNum < 0 || aiAnalysisNum > 100)) {
       return setError("AI Analysis must be 0-100.");
     }
-    const cvdNum = cvd.trim() === "" ? null : Number(cvd);
-    if (cvdNum !== null && !Number.isFinite(cvdNum)) return setError("CVD must be a number.");
     const rrNum = rr.trim() === "" ? null : Number(rr);
     if (rrNum !== null && !Number.isFinite(rrNum)) return setError("RR must be a number.");
 
     setError(null);
     setSubmitting(true);
     try {
-      const [chart5m15m, chart1m] = await Promise.all([
-        chart5m15mFile ? resizeImageFile(chart5m15mFile) : Promise.resolve(null),
-        chart1mFile ? resizeImageFile(chart1mFile) : Promise.resolve(null),
-      ]);
+      const chart = chartFile ? await resizeImageFile(chartFile) : null;
 
       await onSubmit({
         entryDate,
         aiAnalysis: aiAnalysisNum,
-        cvd: cvdNum,
         rr: rrNum,
-        chart5m15m,
-        chart1m,
+        chart,
       });
 
       setEntryDate(todayIso());
       setAiAnalysis("");
-      setCvd("");
       setRr("");
-      setChart5m15mFile(null);
-      setChart1mFile(null);
+      setChartFile(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add trade log entry.");
     } finally {
@@ -109,7 +98,7 @@ export function TradeLogForm({
 
   return (
     <form onSubmit={handleSubmit} className="border border-line bg-panel p-5">
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-6">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <div>
           <label className={labelClass} htmlFor="tl-date">Date</label>
           <input
@@ -135,18 +124,6 @@ export function TradeLogForm({
           />
         </div>
         <div>
-          <label className={labelClass} htmlFor="tl-cvd">CVD</label>
-          <input
-            id="tl-cvd"
-            type="number"
-            step="any"
-            className={`${inputClass} mt-2`}
-            value={cvd}
-            onChange={(e) => setCvd(e.target.value)}
-            placeholder="0"
-          />
-        </div>
-        <div>
           <label className={labelClass} htmlFor="tl-rr">RR</label>
           <input
             id="tl-rr"
@@ -159,8 +136,7 @@ export function TradeLogForm({
             title="Signed R-multiple: positive for a win, negative for a loss"
           />
         </div>
-        <FileButton id="tl-chart-5m" label="5m/15m Chart" file={chart5m15mFile} onChange={setChart5m15mFile} />
-        <FileButton id="tl-chart-1m" label="1m Chart" file={chart1mFile} onChange={setChart1mFile} />
+        <FileButton id="tl-chart" label="Chart" file={chartFile} onChange={setChartFile} />
       </div>
 
       <div className="mt-4 flex items-center gap-4">

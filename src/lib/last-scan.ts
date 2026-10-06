@@ -16,14 +16,14 @@ function mapRow(row: ScanRow): SavedScan {
 }
 
 /** No history — only the most recent scan is kept, persisted across restarts until the next run replaces it. */
-export function saveLastScan(generatedAt: string, results: StockResult[]): void {
+export async function saveLastScan(generatedAt: string, results: StockResult[]): Promise<void> {
   const db = getDb();
-  db.prepare("DELETE FROM scans").run();
-  db.prepare("INSERT INTO scans (generated_at, results) VALUES (?, ?)").run(generatedAt, JSON.stringify(results));
+  await db.prepare("DELETE FROM scans").run();
+  await db.prepare("INSERT INTO scans (generated_at, results) VALUES (?, ?)").bind(generatedAt, JSON.stringify(results)).run();
 }
 
-export function getLastScan(): SavedScan | null {
+export async function getLastScan(): Promise<SavedScan | null> {
   const db = getDb();
-  const row = db.prepare("SELECT * FROM scans ORDER BY id DESC LIMIT 1").get() as ScanRow | undefined;
+  const row = await db.prepare("SELECT * FROM scans ORDER BY id DESC LIMIT 1").first<ScanRow>();
   return row ? mapRow(row) : null;
 }

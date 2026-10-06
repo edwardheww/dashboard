@@ -2,9 +2,38 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { CalendarEvent } from "@/lib/econ-calendar";
+import { noTradeReasons } from "@/lib/no-trade-days";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const WEEKS_IN_GRID = 6;
+// Each event type maps to its standard release time (BLS/BEA/Census/ISM/
+// Fed/ECB scheduling conventions, all Eastern Time) — one fixed slot per
+// type, so there's no separate time field to fill in. Two caveats worth
+// knowing: "Powell" only has one true fixed slot, the FOMC press
+// conference — standalone speeches/congressional testimony outside a
+// scheduled FOMC meeting genuinely vary and aren't represented here.
+// "Interest Rate" is treated as the Fed's own decision (same slot as
+// FOMC) since that's what's overwhelmingly meant by that label in a
+// US/NQ-futures context. Bank Holiday has no release time at all — market's
+// just closed.
+const EVENT_TIMES: Record<string, string> = {
+  CPI: "8:30 AM ET",
+  PPI: "8:30 AM ET",
+  NFE: "8:30 AM ET",
+  NFP: "8:30 AM ET",
+  PCE: "8:30 AM ET",
+  GDP: "8:30 AM ET",
+  UN: "8:30 AM ET",
+  PMI: "10:00 AM ET",
+  ECB: "8:15 AM ET",
+  FOMC: "2:00 PM ET",
+  "FOMC Minutes": "2:00 PM ET",
+  "Interest Rate": "2:00 PM ET",
+  Powell: "2:30 PM ET",
+  "Bank Holiday": "—",
+  Others: "—",
+};
+const EVENT_TYPES = Object.keys(EVENT_TIMES);
 
 const inputClass =
   "border border-line bg-void px-2 py-1.5 font-mono text-xs text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none";
@@ -67,8 +96,8 @@ export function CalendarView() {
   const [error, setError] = useState<string | null>(null);
 
   const [formOpen, setFormOpen] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [formDate, setFormDate] = useState(todayIso());
-  const [formTime, setFormTime] = useState("");
   const [formName, setFormName] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -114,30 +143,53 @@ export function CalendarView() {
     }
   }
 
-  async function handleAdd(e: React.FormEvent) {
+  function openAddForm() {
+    setEditingId(null);
+    setFormDate(todayIso());
+    setFormName("");
+    setFormError(null);
+    setFormOpen(true);
+  }
+
+  function startEdit(event: CalendarEvent) {
+    if (event.id === undefined) return;
+    setEditingId(event.id);
+    setFormDate(event.date);
+    setFormName(event.name);
+    setFormError(null);
+    setFormOpen(true);
+  }
+
+  function resetForm() {
+    setFormOpen(false);
+    setEditingId(null);
+    setFormDate(todayIso());
+    setFormName("");
+    setFormError(null);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!formDate) return setFormError("Date is required.");
-    if (!formName.trim()) return setFormError("Event name is required.");
+    if (!formName) return setFormError("Event is required.");
 
     setFormError(null);
     setSubmitting(true);
     try {
-      const res = await fetch("/api/manual-calendar", {
-        method: "POST",
+      const url = editingId ? `/api/manual-calendar/${editingId}` : "/api/manual-calendar";
+      const res = await fetch(url, {
+        method: editingId ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ date: formDate, time: formTime.trim(), name: formName.trim() }),
+        body: JSON.stringify({ date: formDate, time: EVENT_TIMES[formName] ?? "—", name: formName }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
-        throw new Error(body?.error ?? "Failed to add event.");
+        throw new Error(body?.error ?? `Failed to ${editingId ? "update" : "add"} event.`);
       }
-      setFormDate(todayIso());
-      setFormTime("");
-      setFormName("");
-      setFormOpen(false);
+      resetForm();
       await refresh();
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : "Failed to add event.");
+      setFormError(err instanceof Error ? err.message : `Failed to ${editingId ? "update" : "add"} event.`);
     } finally {
       setSubmitting(false);
     }
@@ -146,6 +198,7 @@ export function CalendarView() {
   async function handleDelete(id: number) {
     const res = await fetch(`/api/manual-calendar/${id}`, { method: "DELETE" });
     if (!res.ok) return;
+    if (editingId === id) resetForm();
     await refresh();
   }
 
@@ -216,7 +269,7 @@ export function CalendarView() {
           </button>
           <button
             type="button"
-            onClick={() => setFormOpen((o) => !o)}
+            onClick={() => (formOpen ? resetForm() : openAddForm())}
             className="text-[11px] uppercase tracking-wider text-ink-faint transition-colors duration-300 hover:text-accent"
           >
             {formOpen ? "Cancel" : "+ Add event"}
@@ -225,7 +278,7 @@ export function CalendarView() {
       </div>
 
       {formOpen && (
-        <form onSubmit={handleAdd} className="animate-reveal flex flex-wrap items-end gap-3 border border-line bg-panel p-4">
+        <form onSubmit={handleSubmit} className="animate-reveal flex flex-wrap items-end gap-3 border border-line bg-panel p-4">
           <div>
             <label className="text-[11px] uppercase tracking-wider text-ink-faint" htmlFor="cal-date">Date</label>
             <input
@@ -236,34 +289,33 @@ export function CalendarView() {
               className={`${inputClass} mt-2 block`}
             />
           </div>
-          <div>
-            <label className="text-[11px] uppercase tracking-wider text-ink-faint" htmlFor="cal-time">Time</label>
-            <input
-              id="cal-time"
-              type="text"
-              value={formTime}
-              onChange={(e) => setFormTime(e.target.value)}
-              placeholder="8:30 AM ET"
-              className={`${inputClass} mt-2 block w-32`}
-            />
-          </div>
-          <div className="min-w-[220px] flex-1">
-            <label className="text-[11px] uppercase tracking-wider text-ink-faint" htmlFor="cal-name">Event</label>
-            <input
+          <div className="min-w-[180px]">
+            <label className="flex items-baseline justify-between text-[11px] uppercase tracking-wider text-ink-faint" htmlFor="cal-name">
+              <span>Event</span>
+              {formName && <span className="font-mono normal-case text-ink-faint">{EVENT_TIMES[formName]}</span>}
+            </label>
+            <select
               id="cal-name"
-              type="text"
               value={formName}
               onChange={(e) => setFormName(e.target.value)}
-              placeholder="ISM Manufacturing PMI"
               className={`${inputClass} mt-2 block w-full`}
-            />
+            >
+              <option value="" disabled>
+                Select…
+              </option>
+              {EVENT_TYPES.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
           </div>
           <button
             type="submit"
             disabled={submitting}
             className="h-[34px] bg-accent px-4 text-[11px] font-medium uppercase tracking-wider text-void transition-[opacity,transform] duration-300 hover:opacity-90 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {submitting ? "Adding…" : "Add"}
+            {editingId ? (submitting ? "Saving…" : "Save") : submitting ? "Adding…" : "Add"}
           </button>
           {formError && (
             <span className="text-sm text-loss" role="alert">
@@ -289,29 +341,40 @@ export function CalendarView() {
           {grid.map((cell) => {
             const isToday = cell.date === todayKey;
             const dayEvents = eventsByDate.get(cell.date) ?? [];
+            const blockReasons = events === null ? [] : noTradeReasons(cell.date, dayEvents);
+            const isBlocked = blockReasons.length > 0;
+            const isNonWeekendBlock = blockReasons.some((r) => r !== "Weekend");
             return (
               <div
                 key={cell.date}
-                className={`flex min-h-[90px] flex-col gap-1 bg-panel p-2 ${isToday ? "border border-accent" : ""}`}
+                title={isBlocked ? blockReasons.join(", ") : undefined}
+                className={`flex min-h-[90px] flex-col gap-1 p-2 ${isBlocked ? "bg-void" : "bg-panel"} ${isToday ? "border border-accent" : ""}`}
               >
-                <span
-                  className={`font-mono text-xs tabular-nums ${
-                    !cell.inCurrentMonth ? "text-ink-faint/50" : isToday ? "font-medium text-accent" : "text-ink-dim"
-                  }`}
-                >
-                  {cell.day}
-                </span>
+                <div className="flex items-center justify-between gap-1">
+                  <span
+                    className={`font-mono text-xs tabular-nums ${
+                      !cell.inCurrentMonth ? "text-ink-faint/50" : isToday ? "font-medium text-accent" : isBlocked ? "text-ink-faint" : "text-ink-dim"
+                    }`}
+                  >
+                    {cell.day}
+                  </span>
+                  {isNonWeekendBlock && cell.inCurrentMonth && (
+                    <span className="text-[8px] uppercase tracking-wide text-loss/70">No trade</span>
+                  )}
+                </div>
                 {events === null ? null : (
                   <div className="flex flex-col gap-0.5">
-                    {dayEvents.map((event, i) => (
-                      <div key={i} className="group flex items-center gap-1">
-                        <span
-                          title={`${event.name} — ${event.typicalTimeET}`}
-                          className="truncate text-[10px] uppercase tracking-wide text-accent"
-                        >
-                          {event.name}
-                        </span>
-                        {event.source === "manual" && event.id !== undefined && (
+                    {dayEvents.map((event, i) =>
+                      event.source === "manual" && event.id !== undefined ? (
+                        <div key={i} className="group flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => startEdit(event)}
+                            title={`Edit — ${event.name} at ${event.typicalTimeET}`}
+                            className="truncate text-left text-[10px] uppercase tracking-wide text-accent transition-colors duration-300 hover:text-ink"
+                          >
+                            {event.name}
+                          </button>
                           <button
                             type="button"
                             onClick={() => handleDelete(event.id!)}
@@ -320,9 +383,17 @@ export function CalendarView() {
                           >
                             ×
                           </button>
-                        )}
-                      </div>
-                    ))}
+                        </div>
+                      ) : (
+                        <span
+                          key={i}
+                          title={`${event.name} — ${event.typicalTimeET}`}
+                          className="truncate text-[10px] uppercase tracking-wide text-accent"
+                        >
+                          {event.name}
+                        </span>
+                      )
+                    )}
                   </div>
                 )}
               </div>

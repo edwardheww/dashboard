@@ -126,51 +126,97 @@ function atr(bars: DailyBar[], period: number): number | null {
   return average(trueRanges);
 }
 
-export function scoreStocks(metrics: StockMetrics[]): ScoredStock[] {
-  const computed = metrics.map((m) => {
-    const { bars, price } = m;
-    const sma20 = sma(bars, 20);
-    const sma50 = sma(bars, 50);
-    const sma100 = sma(bars, 100);
-    const atr14 = atr(bars, 14);
-    const return1m = returnPct(bars, 20);
-    const return6m = returnPct(bars, 126);
+// Per-symbol half of scoring — everything computable from just that one
+// stock's own bars, with no dependency on the rest of the universe. Split
+// out from scoreStocks (below) specifically so the live app can compute
+// this per-symbol piece across several smaller Cloudflare Workers requests
+// (see api/screen/bars) and only combine everything for the cross-sectional
+// percentile-rank step (finalizeScoring) in one place — Workers caps how
+// many outbound fetches a single request can make, and a full Nasdaq-100
+// bars fetch exceeds that on the Free plan. Pure computation, not
+// per-symbol subrequests-worth of extraction, so this split changes nothing
+// about scoreStocks' actual output — see the "these two calls together
+// exactly reproduce the old function" comment on scoreStocks below.
+export type RawStockMetrics = {
+  symbol: string;
+  name: string;
+  sector: string;
+  price: number;
+  sma20: number | null;
+  sma50: number | null;
+  sma100: number | null;
+  atrPct: number | null;
+  typicalMoveOverHoldPct: number | null;
+  return1m: number | null;
+  return6m: number | null;
+  trendRaw: number | null;
+};
 
-    const atrPct = atr14 ? (atr14 / price) * 100 : null;
-    const typicalMoveOverHoldPct = atrPct !== null ? atrPct * Math.sqrt(HOLD_TRADING_DAYS) : null;
+export function computeRawMetrics(m: StockMetrics): RawStockMetrics {
+  const { bars, price } = m;
+  const sma20 = sma(bars, 20);
+  const sma50 = sma(bars, 50);
+  const sma100 = sma(bars, 100);
+  const atr14 = atr(bars, 14);
+  const return1m = returnPct(bars, 20);
+  const return6m = returnPct(bars, 126);
 
-    const trendRaw = average([
-      sma50 !== null ? (price / sma50 - 1) * 100 : null,
-      sma50 !== null && sma100 !== null ? (sma50 / sma100 - 1) * 100 : null,
-      return6m,
-    ]);
+  const atrPct = atr14 ? (atr14 / price) * 100 : null;
+  const typicalMoveOverHoldPct = atrPct !== null ? atrPct * Math.sqrt(HOLD_TRADING_DAYS) : null;
 
-    return { m, sma20, sma50, sma100, atrPct, typicalMoveOverHoldPct, return1m, return6m, trendRaw };
-  });
+  const trendRaw = average([
+    sma50 !== null ? (price / sma50 - 1) * 100 : null,
+    sma50 !== null && sma100 !== null ? (sma50 / sma100 - 1) * 100 : null,
+    return6m,
+  ]);
 
-  const trendPct = percentileRank(computed.map((c) => c.trendRaw));
+  return {
+    symbol: m.symbol,
+    name: m.name,
+    sector: m.sector,
+    price,
+    sma20,
+    sma50,
+    sma100,
+    atrPct,
+    typicalMoveOverHoldPct,
+    return1m,
+    return6m,
+    trendRaw,
+  };
+}
 
-  return computed.map((c, i) => {
+// Cross-sectional half — needs every symbol's raw metrics together, since
+// the trend score is a percentile rank relative to the rest of the field.
+export function finalizeScoring(raw: RawStockMetrics[]): ScoredStock[] {
+  const trendPct = percentileRank(raw.map((r) => r.trendRaw));
+
+  return raw.map((r, i) => {
     const factors: Factor[] = [{ key: "trend", label: "Trend", score: trendPct[i] }];
 
     return {
-      symbol: c.m.symbol,
-      name: c.m.name,
-      sector: c.m.sector,
-      price: c.m.price,
+      symbol: r.symbol,
+      name: r.name,
+      sector: r.sector,
+      price: r.price,
       factors,
       composite: trendPct[i],
       raw: {
-        sma20: c.sma20,
-        sma50: c.sma50,
-        sma100: c.sma100,
-        atrPct: c.atrPct,
-        typicalMoveOverHoldPct: c.typicalMoveOverHoldPct,
-        return1m: c.return1m,
-        return6m: c.return6m,
+        sma20: r.sma20,
+        sma50: r.sma50,
+        sma100: r.sma100,
+        atrPct: r.atrPct,
+        typicalMoveOverHoldPct: r.typicalMoveOverHoldPct,
+        return1m: r.return1m,
+        return6m: r.return6m,
       },
     };
   });
+}
+
+/** These two calls together exactly reproduce the old single-pass function — kept as one entry point since the backtest scripts (run in Node, no Workers subrequest limit) have no reason to split it. */
+export function scoreStocks(metrics: StockMetrics[]): ScoredStock[] {
+  return finalizeScoring(metrics.map(computeRawMetrics));
 }
 
 export function buildMetrics(

@@ -10,6 +10,6 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
     return NextResponse.json({ error: "Invalid trade log id." }, { status: 400 });
   }
 
-  deleteTradeLogEntry(entryId);
+  await deleteTradeLogEntry(entryId);
   return NextResponse.json({ ok: true });
 }

@@ -23,23 +23,13 @@
  * filter). None of them survived — trend alone has won every round. See
  * scoring.ts's header comment and git history for the full investigation.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { Constituent, DailyBar } from "../src/lib/types";
-import { SCREENING_UNIVERSE } from "../src/lib/universe"; // live app's universe: Nasdaq-100 mega-caps
-import { NASDAQ_NEXT_GEN_100 } from "./nasdaq-next-gen-100"; // backtest-only comparison universe
-import { getHistoricalBars } from "../src/lib/yahoo";
-import { buildMetricsAsOf, scoreStocks, HOLD_TRADING_DAYS, MIN_BARS_REQUIRED } from "../src/lib/scoring";
+import type { DailyBar } from "../src/lib/types";
+import { buildMetricsAsOf, scoreStocks, HOLD_TRADING_DAYS } from "../src/lib/scoring";
+import { argValue, average, median, loadBars, generateRebalancePoints, trimExtremes } from "./lib/stats";
+import { UNIVERSE_NAME, SCREENING_SET, SYMBOLS, BARS_CACHE_PATH } from "./lib/universe";
 
-function argValue(flag: string, fallback: string): string {
-  const arg = process.argv.find((a) => a.startsWith(`--${flag}=`));
-  return arg ? arg.split("=")[1] : fallback;
-}
-
-const UNIVERSE_NAME = argValue("universe", "megacap") === "nextgen100" ? "nextgen100" : "megacap";
-const SCREENING_SET: Constituent[] = UNIVERSE_NAME === "nextgen100" ? NASDAQ_NEXT_GEN_100 : SCREENING_UNIVERSE;
-
-const CACHE_PATH = path.join(process.cwd(), "data", `backtest-bars-cache.${UNIVERSE_NAME}.json`);
 const RESULTS_PATH = path.join(process.cwd(), "data", `backtest-results.${UNIVERSE_NAME}.json`);
 const LOOKBACK_TRADING_DAYS = Number(argValue("lookback", "630")); // ~2.5yr default: ~2yr of cycles + 6mo formation buffer
 const COST_BPS_ROUND_TRIP = 15; // assumed spread + slippage estimate, both legs combined
@@ -67,66 +57,11 @@ type AggregateStats = {
   winRate: number;
 };
 
-function average(values: number[]): number | null {
-  if (values.length === 0) return null;
-  return values.reduce((a, b) => a + b, 0) / values.length;
-}
-
-function median(values: number[]): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
-}
-
 function stdev(values: number[]): number {
   if (values.length < 2) return 0;
   const m = average(values)!;
   const variance = values.reduce((sum, v) => sum + (v - m) ** 2, 0) / (values.length - 1);
   return Math.sqrt(variance);
-}
-
-/** Drops the `n` highest and `n` lowest cycles by portfolio return — a standard outlier-robustness check. */
-function trimExtremes(cycles: CycleResult[], n: number): CycleResult[] {
-  if (n <= 0 || cycles.length <= 2 * n) return cycles;
-  const sorted = [...cycles].sort((a, b) => a.portfolioReturnPct - b.portfolioReturnPct);
-  return sorted.slice(n, sorted.length - n);
-}
-
-async function loadBars(refresh: boolean): Promise<Map<string, DailyBar[]>> {
-  if (!refresh && existsSync(CACHE_PATH)) {
-    console.log(`Loading cached bars from ${CACHE_PATH} (pass --refresh to re-fetch)`);
-    const raw = JSON.parse(readFileSync(CACHE_PATH, "utf-8")) as Record<string, DailyBar[]>;
-    return new Map(Object.entries(raw));
-  }
-
-  console.log(`Fetching ~${LOOKBACK_TRADING_DAYS} trading days of history for ${SCREENING_SET.length} symbols from Yahoo Finance...`);
-  const symbols = SCREENING_SET.map((c) => c.symbol);
-  const barsMap = await getHistoricalBars(symbols, LOOKBACK_TRADING_DAYS);
-
-  const covered = [...barsMap.values()].filter((b) => b.length >= MIN_BARS_REQUIRED).length;
-  console.log(`Got usable history for ${covered}/${symbols.length} symbols.`);
-
-  mkdirSync(path.dirname(CACHE_PATH), { recursive: true });
-  writeFileSync(CACHE_PATH, JSON.stringify(Object.fromEntries(barsMap)));
-  console.log(`Cached bars to ${CACHE_PATH}`);
-
-  return barsMap;
-}
-
-function generateRebalancePoints(barsMap: Map<string, DailyBar[]>): number[] {
-  let maxLength = 0;
-  for (const bars of barsMap.values()) maxLength = Math.max(maxLength, bars.length);
-
-  const points: number[] = [];
-  // distanceFromEnd needs room for: a next-session entry bar, a full hold
-  // after it, all before the array runs out at the recent end.
-  let d = HOLD_TRADING_DAYS + 1;
-  while (d + MIN_BARS_REQUIRED <= maxLength) {
-    points.push(d);
-    d += HOLD_TRADING_DAYS;
-  }
-  return points.sort((a, b) => b - a); // largest distance (oldest) first -> chronological order
 }
 
 function simulateCycle(barsMap: Map<string, DailyBar[]>, distanceFromEnd: number, topN: number = TOP_N): CycleResult | null {
@@ -295,7 +230,7 @@ function printStats(cycles: CycleResult[]) {
 
 async function main() {
   const refresh = process.argv.includes("--refresh");
-  const barsMap = await loadBars(refresh);
+  const barsMap = await loadBars(BARS_CACHE_PATH, SYMBOLS, refresh, LOOKBACK_TRADING_DAYS);
   const points = generateRebalancePoints(barsMap);
 
   console.log(`\n${points.length} non-overlapping ~${HOLD_TRADING_DAYS}-trading-day cycles available.`);
@@ -378,7 +313,7 @@ CAVEATS — read before trusting any number below:
       );
       printStats(withoutTopCycle);
 
-      const trimmed1 = trimExtremes(cycles, 1);
+      const trimmed1 = trimExtremes(cycles, (c) => c.portfolioReturnPct, 1);
       if (trimmed1.length !== cycles.length) {
         console.log("\nSymmetric trim (drop 1 best + 1 worst cycle):");
         printStats(trimmed1);

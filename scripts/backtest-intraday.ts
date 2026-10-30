@@ -39,6 +39,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import YahooFinance from "yahoo-finance2";
 import { getHistoricalBars } from "../src/lib/yahoo";
+import { average, median, spearman, trimExtremes } from "./lib/stats";
 
 const yf = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
 const SYMBOL = "NQ=F";
@@ -53,55 +54,6 @@ const INTRADAY_CACHE_PATH = path.join(process.cwd(), "data", "backtest-intraday-
 
 // ---------- shared stats helpers (matches scripts/backtest-newfactors.ts) ----------
 
-function average(values: number[]): number | null {
-  if (values.length === 0) return null;
-  return values.reduce((a, b) => a + b, 0) / values.length;
-}
-
-function median(values: number[]): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
-}
-
-function rankOf(values: number[]): number[] {
-  const sorted = values.map((v, i) => ({ v, i })).sort((a, b) => a.v - b.v);
-  const n = values.length;
-  const ranks = new Array(n).fill(50);
-  sorted.forEach((item, rank) => {
-    ranks[item.i] = n <= 1 ? 50 : (rank / (n - 1)) * 100;
-  });
-  return ranks;
-}
-
-function spearman(xs: number[], ys: number[]): number {
-  const n = xs.length;
-  if (n < 2) return 0;
-  const rx = rankOf(xs);
-  const ry = rankOf(ys);
-  const mx = average(rx)!;
-  const my = average(ry)!;
-  let num = 0;
-  let dx2 = 0;
-  let dy2 = 0;
-  for (let i = 0; i < n; i++) {
-    const ddx = rx[i] - mx;
-    const ddy = ry[i] - my;
-    num += ddx * ddy;
-    dx2 += ddx * ddx;
-    dy2 += ddy * ddy;
-  }
-  const denom = Math.sqrt(dx2 * dy2);
-  return denom === 0 ? 0 : num / denom;
-}
-
-function trimExtremes(values: number[], n: number): number[] {
-  if (n <= 0 || values.length <= 2 * n) return values;
-  const sorted = [...values].sort((a, b) => a - b);
-  return sorted.slice(n, sorted.length - n);
-}
-
 function winRate(values: number[]): number {
   if (values.length === 0) return 0;
   return (values.filter((v) => v > 0).length / values.length) * 100;
@@ -112,7 +64,7 @@ function reportReturns(label: string, values: number[]) {
     console.log(`  ${label}: n=0 (no observations)`);
     return;
   }
-  const trimmed = trimExtremes(values, Math.max(1, Math.floor(values.length * 0.05)));
+  const trimmed = trimExtremes(values, (v) => v, Math.max(1, Math.floor(values.length * 0.05)));
   console.log(
     `  ${label}: n=${values.length}, median=${median(values).toFixed(3)}%, mean=${average(values)!.toFixed(3)}%, win-rate=${winRate(values).toFixed(0)}%` +
       ` | trimmed(${values.length - trimmed.length} dropped): median=${median(trimmed).toFixed(3)}%, mean=${(average(trimmed) ?? 0).toFixed(3)}%`

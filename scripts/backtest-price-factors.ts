@@ -15,39 +15,16 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { Constituent, DailyBar } from "../src/lib/types";
-import { SCREENING_UNIVERSE } from "../src/lib/universe";
-import { NASDAQ_NEXT_GEN_100 } from "./nasdaq-next-gen-100";
+import type { DailyBar } from "../src/lib/types";
 import { getHistoricalBars } from "../src/lib/yahoo";
-import { buildMetricsAsOf, scoreStocks, HOLD_TRADING_DAYS, MIN_BARS_REQUIRED, type StockMetrics, type ScoredStock } from "../src/lib/scoring";
+import { buildMetricsAsOf, scoreStocks, HOLD_TRADING_DAYS, type StockMetrics, type ScoredStock } from "../src/lib/scoring";
+import { average, median, loadBars, generateRebalancePoints, percentileRankNullable, trimExtremes } from "./lib/stats";
+import { UNIVERSE_NAME, SCREENING_SET, SYMBOLS, BARS_CACHE_PATH } from "./lib/universe";
 
-function argValue(flag: string, fallback: string): string {
-  const arg = process.argv.find((a) => a.startsWith(`--${flag}=`));
-  return arg ? arg.split("=")[1] : fallback;
-}
-
-const UNIVERSE_NAME = argValue("universe", "megacap") === "nextgen100" ? "nextgen100" : "megacap";
-const SCREENING_SET: Constituent[] = UNIVERSE_NAME === "nextgen100" ? NASDAQ_NEXT_GEN_100 : SCREENING_UNIVERSE;
-const SYMBOLS = SCREENING_SET.map((c) => c.symbol);
-
-const BARS_CACHE_PATH = path.join(process.cwd(), "data", `backtest-bars-cache.${UNIVERSE_NAME}.json`);
 const MARKET_CACHE_PATH = path.join(process.cwd(), "data", `backtest-bars-cache.qqq.json`);
 const TOP_N = 3;
 const FORMATION_WINDOW = 126;
 const RESIDUAL_BETA_WINDOW = 252;
-
-async function loadBars(refresh: boolean): Promise<Map<string, DailyBar[]>> {
-  if (!refresh && existsSync(BARS_CACHE_PATH)) {
-    console.log(`Loading cached bars from ${BARS_CACHE_PATH} (pass --refresh to re-fetch)`);
-    const raw = JSON.parse(readFileSync(BARS_CACHE_PATH, "utf-8")) as Record<string, DailyBar[]>;
-    return new Map(Object.entries(raw));
-  }
-  console.log(`Fetching price history for ${SYMBOLS.length} symbols from Yahoo Finance...`);
-  const barsMap = await getHistoricalBars(SYMBOLS, 630);
-  mkdirSync(path.dirname(BARS_CACHE_PATH), { recursive: true });
-  writeFileSync(BARS_CACHE_PATH, JSON.stringify(Object.fromEntries(barsMap)));
-  return barsMap;
-}
 
 async function loadMarketBars(refresh: boolean): Promise<DailyBar[]> {
   if (!refresh && existsSync(MARKET_CACHE_PATH)) {
@@ -59,43 +36,6 @@ async function loadMarketBars(refresh: boolean): Promise<DailyBar[]> {
   mkdirSync(path.dirname(MARKET_CACHE_PATH), { recursive: true });
   writeFileSync(MARKET_CACHE_PATH, JSON.stringify(bars));
   return bars;
-}
-
-// --- stats helpers ---
-
-function average(values: number[]): number | null {
-  if (values.length === 0) return null;
-  return values.reduce((a, b) => a + b, 0) / values.length;
-}
-
-function median(values: number[]): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
-}
-
-function percentileRankNullable(values: (number | null)[]): number[] {
-  const present = values
-    .map((v, i) => ({ v, i }))
-    .filter((x): x is { v: number; i: number } => x.v !== null && Number.isFinite(x.v));
-  const sorted = [...present].sort((a, b) => a.v - b.v);
-  const n = sorted.length;
-  const byIndex = new Map<number, number>();
-  sorted.forEach((item, rank) => byIndex.set(item.i, n <= 1 ? 50 : (rank / (n - 1)) * 100));
-  return values.map((_, i) => byIndex.get(i) ?? 50);
-}
-
-function generateRebalancePoints(barsMap: Map<string, DailyBar[]>): number[] {
-  let maxLength = 0;
-  for (const bars of barsMap.values()) maxLength = Math.max(maxLength, bars.length);
-  const points: number[] = [];
-  let d = HOLD_TRADING_DAYS + 1;
-  while (d + MIN_BARS_REQUIRED <= maxLength) {
-    points.push(d);
-    d += HOLD_TRADING_DAYS;
-  }
-  return points.sort((a, b) => b - a);
 }
 
 // --- candidate 1: overnight momentum ---
@@ -240,15 +180,9 @@ function aggregate(cycles: CycleResult[]): AggregateStats {
   return { n: cycles.length, meanExcessPct: average(excess) ?? 0, medianExcessPct: median(excess) };
 }
 
-function trimExtremes(cycles: CycleResult[], n: number): CycleResult[] {
-  if (n <= 0 || cycles.length <= 2 * n) return cycles;
-  const sorted = [...cycles].sort((a, b) => a.portfolioReturnPct - b.portfolioReturnPct);
-  return sorted.slice(n, sorted.length - n);
-}
-
 async function main() {
   const refresh = process.argv.includes("--refresh");
-  const barsMap = await loadBars(refresh);
+  const barsMap = await loadBars(BARS_CACHE_PATH, SYMBOLS, refresh);
   const marketBars = await loadMarketBars(refresh);
 
   const points = generateRebalancePoints(barsMap);
@@ -355,7 +289,7 @@ CAVEATS:
     console.log(`  TRAIN at w=${bestWeight.toFixed(1)} — mean excess: ${aggregate(bestTrain).meanExcessPct.toFixed(2)}%  median excess: ${aggregate(bestTrain).medianExcessPct.toFixed(2)}%`);
     console.log(`  TEST  at w=${bestWeight.toFixed(1)} — mean excess: ${aggregate(bestTest).meanExcessPct.toFixed(2)}%  median excess: ${aggregate(bestTest).medianExcessPct.toFixed(2)}%`);
     if (bestWeight !== 1.0) {
-      const trimmedTest = trimExtremes(bestTest, Math.max(1, Math.round(bestTest.length * 0.05)));
+      const trimmedTest = trimExtremes(bestTest, (c) => c.portfolioReturnPct, Math.max(1, Math.round(bestTest.length * 0.05)));
       console.log(`  TEST at w=${bestWeight.toFixed(1)}, symmetric-trimmed — mean excess: ${aggregate(trimmedTest).meanExcessPct.toFixed(2)}%  median excess: ${aggregate(trimmedTest).medianExcessPct.toFixed(2)}%`);
     }
 
